@@ -4,48 +4,140 @@
 
 using namespace std;
 
-static vector<pair<regex, TokenType>> tokenPatterns = {
-    {regex("^fn"), T_FUNCTION}, {regex("^int"), T_INT}, {regex("^float"), T_FLOAT},
-    {regex("^string"), T_STRING}, {regex("^bool"), T_BOOL}, {regex("^return"), T_RETURN},
-    {regex("^if"), T_IF}, {regex("^else"), T_ELSE}, {regex("^for"), T_FOR},
-    {regex("^while"), T_WHILE}, {regex("^break"), T_BREAK}, {regex("^continue"), T_CONTINUE},
-    {regex("^true|^false"), T_BOOLLIT},
-    {regex("^[0-9][a-zA-Z0-9_]*"), T_INVALID_IDENTIFIER},
-    {regex("^[a-zA-Z_][a-zA-Z0-9_]*[^a-zA-Z0-9_\\s;{}()\\[\\],=+\\-*/%&|^~<>?:.\"]"), T_INVALID_IDENTIFIER},
-    {regex("^[a-zA-Z_][a-zA-Z0-9_]*"), T_IDENTIFIER},
+vector<pair<regex, TokenType>> tokenPatterns = {
+    
+    {regex("^//[^\\n]*"), T_COMMENT},
+
+    
+    {regex("^fn\\b"), T_FUNCTION},
+    {regex("^int\\b"), T_INT},
+    {regex("^float\\b"), T_FLOAT},
+    {regex("^string\\b"), T_STRING},
+    {regex("^bool\\b"), T_BOOL},
+    {regex("^return\\b"), T_RETURN},
+    {regex("^if\\b"), T_IF},
+    {regex("^else\\b"), T_ELSE},
+    {regex("^for\\b"), T_FOR},
+    {regex("^while\\b"), T_WHILE},
+    {regex("^break\\b"), T_BREAK},
+    {regex("^continue\\b"), T_CONTINUE},
+    {regex("^true\\b|^false\\b"), T_BOOLLIT},
+
+    
+    {regex("^\\.[0-9]+([eE][+-]?[0-9]+)?"), T_FLOATLIT},  // .5  .123  .5e-2
     {regex("^[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?"), T_FLOATLIT},
     {regex("^[0-9]+\\.[0-9]+"), T_FLOATLIT},
-    {regex("^0[xX][0-9a-fA-F]+"), T_INTLIT},
+    {regex("^0[xX][0-9a-fA-F]+"), T_INTLIT}, 
+
+
+    {regex("^[0-9]+[a-zA-Z_][a-zA-Z0-9_]*"), T_INVALID_IDENTIFIER},
+
+
     {regex("^[0-9]+"), T_INTLIT},
-    {regex("^\"([^\"\\\\]|\\\\.)*\""), T_STRINGLIT},
-    {regex("^=="), T_EQUALSOP}, {regex("^="), T_ASSIGNOP},
-    {regex("^\\+\\+"), T_INCREMENT}, {regex("^\\+="), T_PLUS_ASSIGN},
-    {regex("^\\+"), T_PLUS}, {regex("^-"), T_MINUS},
-    {regex("^\\*"), T_MULT}, {regex("^/"), T_DIV},
-    {regex("^%"), T_MOD}, {regex("^<="), T_LTE},
-    {regex("^>="), T_GTE}, {regex("^<"), T_LT},
-    {regex("^>"), T_GT}, {regex("^!="), T_NEQ},
-    {regex("^&&"), T_AND}, {regex("^\\|\\|"), T_OR},
+
+    {regex("^\"([^\"\\\\\\n]|\\\\.)*\""), T_STRINGLIT},
+
+
+    {regex("^[a-zA-Z_][a-zA-Z0-9_][^a-zA-Z0-9_\\s;{}()\\[\\],=+\\-/%&|^~<>?:.\"]+[a-zA-Z0-9_]*"), T_INVALID_IDENTIFIER},
+
+    
+    {regex("^[a-zA-Z_][a-zA-Z0-9_]*"), T_IDENTIFIER},
+
+    
+    {regex("^=="), T_EQUALSOP},
+    {regex("^\\+\\+"), T_INCREMENT},
+    {regex("^\\+\\="), T_PLUS_ASSIGN},
+    {regex("^--"), T_DECREMENT},
+    {regex("^\\-\\="), T_MINUS_ASSIGN},
+    {regex("^<<"), T_LEFTSHIFT},
+    {regex("^>>"), T_RIGHTSHIFT},
+    {regex("^<="), T_LTE},
+    {regex("^>="), T_GTE},
+    {regex("^!="), T_NEQ},
+    {regex("^&&"), T_AND},
+    {regex("^\\|\\|"), T_OR},
+
+    
+    {regex("^="), T_ASSIGNOP},
+    {regex("^\\+"), T_PLUS},
+    {regex("^-"), T_MINUS},
+    {regex("^\\*"), T_MULT},
+    {regex("^/"), T_DIV},
+    {regex("^%"), T_MOD},
+    {regex("^<"), T_LT},
+    {regex("^>"), T_GT},
     {regex("^!"), T_NOT},
-    {regex("^&"), T_BITAND}, {regex("^\\|"), T_BITOR},
-    {regex("^\\^"), T_BITXOR}, {regex("^~"), T_BITNOT},
-    {regex("^<<"), T_LEFTSHIFT}, {regex("^>>"), T_RIGHTSHIFT},
-    {regex("^\\("), T_PARENL}, {regex("^\\)"), T_PARENR},
-    {regex("^\\{"), T_BRACEL}, {regex("^\\}"), T_BRACER},
-    {regex("^\\["), T_BRACKL}, {regex("^\\]"), T_BRACKR},
-    {regex("^,"), T_COMMA}, {regex("^;"), T_SEMICOLON},
-    {regex("^:"), T_COLON}, {regex("^\\?"), T_QUESTION},
+
+   
+    {regex("^&"), T_BITAND},
+    {regex("^\\|"), T_BITOR},
+    {regex("^\\^"), T_BITXOR},
+    {regex("^~"), T_BITNOT},
+
+    // Punctuation
+    {regex("^\\("), T_PARENL},
+    {regex("^\\)"), T_PARENR},
+    {regex("^\\{"), T_BRACEL},
+    {regex("^\\}"), T_BRACER},
+    {regex("^\\["), T_BRACKL},
+    {regex("^\\]"), T_BRACKR},
+    {regex("^,"), T_COMMA},
+    {regex("^;"), T_SEMICOLON},
+    {regex("^:"), T_COLON},
+    {regex("^\\?"), T_QUESTION},
     {regex("^\\."), T_DOT},
-    {regex("^//[^\n]*"), T_COMMENT},
+
 };
 
-vector<Token> RegexLexer::tokenize(const string &src) {
+
+string unescapeString(const string &quoted) {
+    
+    string s;
+    if (quoted.size() >= 2 && quoted.front() == '"' && quoted.back() == '"') {
+        string body = quoted.substr(1, quoted.size() - 2);
+        s.reserve(body.size());
+        for (size_t i = 0; i < body.size(); ++i) {
+            char c = body[i];
+            if (c == '\\' && i + 1 < body.size()) {
+                char next = body[i+1];
+                switch (next) {
+                    case 'n': s.push_back('\n'); break;
+                    case 't': s.push_back('\t'); break;
+                    case 'r': s.push_back('\r'); break;
+                    case '\\': s.push_back('\\'); break;
+                    case '"': s.push_back('"'); break;
+                    case '\'': s.push_back('\''); break;
+                    case '0': s.push_back('\0'); break;
+                    
+                    default:
+                        
+                        s.push_back('\\');
+                        s.push_back(next);
+                        break;
+                }
+                i++; 
+            } else {
+                s.push_back(c);
+            }
+        }
+    } else {
+        
+        s = quoted;
+    }
+    return s;
+}
+
+
+vector<Token> RegexLexer::tokenize(const string &src) 
+{
     vector<Token> tokens;
     string code = src;
-    int line = 1, column = 1;
+    int line = 1;
+    int column = 1;
     smatch match;
 
     while (!code.empty()) {
+        
         if (regex_search(code, match, regex("^\\s+"))) {
             for (char c : match.str()) {
                 if (c == '\n') { line++; column = 1; }
@@ -55,20 +147,21 @@ vector<Token> RegexLexer::tokenize(const string &src) {
             continue;
         }
 
+        
         if (regex_search(code, match, regex("^/\\*"))) {
-            code = match.suffix().str();
             size_t end_pos = code.find("*/");
             if (end_pos == string::npos) {
                 cerr << "Error: Unclosed multi-line comment at line " << line << ", column " << column << endl;
                 break;
             }
-            string comment_content = code.substr(0, end_pos);
-            for (char c : comment_content) {
+            string token_value = code.substr(0, end_pos + 2); // include */
+            tokens.push_back({T_COMMENT, token_value, line, column});
+            // update line/column using raw token_value (not unescaped)
+            for (char c : token_value) {
                 if (c == '\n') { line++; column = 1; }
                 else { column++; }
             }
             code = code.substr(end_pos + 2);
-            column += 2;
             continue;
         }
 
@@ -78,7 +171,9 @@ vector<Token> RegexLexer::tokenize(const string &src) {
             if (regex_search(code, match, tp.first)) {
                 string token_value = match.str();
 
+                
                 if (tp.second == T_COMMENT) {
+                    tokens.push_back({T_COMMENT, token_value, line, column});
                     for (char c : token_value) {
                         if (c == '\n') { line++; column = 1; }
                         else { column++; }
@@ -88,13 +183,31 @@ vector<Token> RegexLexer::tokenize(const string &src) {
                     break;
                 }
 
-                if (tp.second == T_INVALID_IDENTIFIER) {
-                    cerr << "Error: Invalid identifier '" << token_value
-                         << "' at line " << line << ", column " << column << endl;
+                
+                
+                if (tp.second == T_STRINGLIT) {
+                    string unescaped = unescapeString(token_value); 
+                    tokens.push_back({T_STRINGLIT, unescaped, line, column});
+                    
+                    for (char c : token_value) {
+                        if (c == '\n') { line++; column = 1; }
+                        else { column++; }
+                    }
+                    code = match.suffix().str();
+                    matched = true;
+                    break;
                 }
 
-                tokens.push_back({tp.second, token_value, line, column});
+                
+                if (tp.second == T_INVALID_IDENTIFIER) {
+                    cerr << "Error: Invalid identifier '" << token_value << "' at line " << line 
+                         << ", column " << column << endl;
+                    tokens.push_back({T_INVALID_IDENTIFIER, token_value, line, column});
+                } else {
+                    tokens.push_back({tp.second, token_value, line, column});
+                }
 
+                
                 for (char c : token_value) {
                     if (c == '\n') { line++; column = 1; }
                     else { column++; }
@@ -107,8 +220,8 @@ vector<Token> RegexLexer::tokenize(const string &src) {
         }
 
         if (!matched) {
-            cerr << "Error: Unknown token '" << code.substr(0, 1)
-                 << "' at line " << line << ", column " << column << endl;
+            cerr << "Error: Unknown token at line " << line << ", column " << column 
+                 << " -> '" << code.substr(0, 1) << "'" << endl;
             tokens.push_back({T_UNKNOWN, string(1, code[0]), line, column});
             column++;
             code.erase(0, 1);
@@ -119,7 +232,9 @@ vector<Token> RegexLexer::tokenize(const string &src) {
     return tokens;
 }
 
-string RegexLexer::tokenTypeToString(TokenType type) {
+
+string RegexLexer::tokenTypeToString(TokenType type) 
+{
     switch(type) {
         case T_FUNCTION: return "T_FUNCTION";
         case T_INT: return "T_INT";
@@ -175,7 +290,13 @@ string RegexLexer::tokenTypeToString(TokenType type) {
         case T_EOF: return "T_EOF";
         case T_INVALID_IDENTIFIER: return "T_INVALID_IDENTIFIER";
         case T_INCREMENT: return "T_INCREMENT";
+        case T_DECREMENT: return "T_DECREMENT";
         case T_PLUS_ASSIGN: return "T_PLUS_ASSIGN";
+        case T_MINUS_ASSIGN: return "T_MINUS_ASSIGN";
+        case T_QUOTE: return "T_QUOTE";
+
+
+        
         default: return "UNKNOWN";
     }
 }

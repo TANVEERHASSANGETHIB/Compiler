@@ -270,6 +270,7 @@ int main() {
             int 123abc; // Invalid identifier
             int my@var; // Invalid identifier
             int result = x * y + 10;
+            float x = .2;
             
             if (x <= 40 && y != 0) {
                 for (int i = 0; i < 10; i++) {

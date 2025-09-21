@@ -400,6 +400,7 @@ int main() {
             string my_str = "Hello \"world\"!\n\tEscaped";
             bool my_bool = true;
             int 123abc; // Invalid identifier
+            float aap = .25;
             int my@var; // Invalid identifier
             int result = x * y + 10;
             

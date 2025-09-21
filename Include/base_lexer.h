@@ -5,7 +5,6 @@
 #include <vector>
 
 using namespace std;
-
 enum TokenType {
     T_FUNCTION, T_INT, T_FLOAT, T_STRING, T_BOOL, T_RETURN,
     T_IF, T_ELSE, T_FOR, T_WHILE, T_BREAK, T_CONTINUE,
@@ -17,8 +16,12 @@ enum TokenType {
     T_PARENL, T_PARENR, T_BRACEL, T_BRACER, T_BRACKL, T_BRACKR,
     T_COMMA, T_SEMICOLON, T_COLON, T_QUESTION, T_DOT,
     T_COMMENT, T_UNKNOWN, T_EOF,
-    T_INVALID_IDENTIFIER, T_INCREMENT, T_PLUS_ASSIGN
+    T_INVALID_IDENTIFIER , T_INCREMENT , T_PLUS_ASSIGN, T_QUOTE, 
+    
+    T_DECREMENT,    // --
+    T_MINUS_ASSIGN  // -=
 };
+
 
 struct Token {
     TokenType type;

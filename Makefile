@@ -1,8 +1,12 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Iinclude
-SRC = src/main.cpp src/manual_lexer.cpp src/regex_lexer.cpp
+
+# Add parser.cpp here
+SRC = src/main.cpp src/manual_lexer.cpp src/regex_lexer.cpp src/parser.cpp
 OBJ = $(SRC:.cpp=.o)
 TARGET = build/lexer_app
+
+.PHONY: all clean
 
 all: $(TARGET)
 

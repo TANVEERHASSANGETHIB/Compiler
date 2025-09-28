@@ -5,9 +5,22 @@
 #include <optional>
 #include <iostream>
 #include <unordered_map>
-#include "regex_lexer.h" // reuse lexer Token and TokenType
+#include <stack>
+#include "regex_lexer.h"
+using namespace std;
 
-// Expanded Parse error kinds
+/*
+  Revised parser.h
+  - More AST node kinds (Member, Index, Postfix)
+  - AST nodes optionally hold the token that produced them for diagnostics
+  - Scope stack + context flags in Parser
+  - Cleaner parse API
+  - Added support for C-style function declarations:
+      - `int fname(int x, int y) { ... }`
+    by introducing parse_function_decl_after_header(...) which is called
+    when the parser sees `type identifier` followed by '('.
+*/
+
 enum class ParseErrorKind {
     // core/token expectation errors
     UnexpectedEOF,
@@ -43,7 +56,7 @@ enum class ParseErrorKind {
     MisplacedReturn,
     MisplacedBreakContinue,
 
-    // semantic-ish errors (some may be raised later in a semantic phase)
+    // semantic-ish errors (to be raised later ideally)
     TypeMismatch,
     UndeclaredIdentifier,
 
@@ -53,181 +66,262 @@ enum class ParseErrorKind {
 
 struct ParseError {
     ParseErrorKind kind;
-    std::optional<Token> token; // token that triggered the error (if available)
-    std::string message;
+    optional<Token> token; // token that triggered the error (if available)
+    string message;
 
     ParseError() = default;
-    ParseError(ParseErrorKind k, std::optional<Token> t, std::string m)
-        : kind(k), token(std::move(t)), message(std::move(m)) {}
+    ParseError(ParseErrorKind k,  optional<Token> t,  string m)
+        : kind(k), token( move(t)), message( move(m)) {}
 };
 
-// AST base
-struct ASTNode { virtual ~ASTNode() = default; virtual void print(int indent=0) const = 0; };
-using ASTNodePtr = std::unique_ptr<ASTNode>;
+// ---------------- AST base ----------------
+struct ASTNode {
+    virtual ~ASTNode() = default;
+    virtual void print(int indent=0) const = 0;
 
-// --- Types ---
-// Simple type node: for now we just store the token text representing the type
+    // optional token for diagnostics (may be empty)
+    optional<Token> origin;
+};
+
+// Convenience aliases
+using ASTNodePtr =  unique_ptr<ASTNode>;
+
+// ---------------- Types ----------------
 struct TypeNode : ASTNode {
-    std::string name; // e.g. "int" or user-defined type
-    TypeNode(std::string n): name(std::move(n)) {}
+    string name; // e.g. "int", "string", or user-defined
+    TypeNode( string n) : name( move(n)) {}
     void print(int indent=0) const override;
 };
 
-// Expressions
+// ---------------- Expressions ----------------
 struct Expr : ASTNode { };
-using ExprPtr = std::unique_ptr<Expr>;
+using ExprPtr =  unique_ptr<Expr>;
 
 struct LiteralExpr : Expr {
-    std::string value; // lexeme
-    LiteralExpr(std::string v): value(std::move(v)) {}
+    string value; // lexeme or normalized literal text
+    LiteralExpr( string v) : value( move(v)) {}
     void print(int indent=0) const override;
 };
+
 struct IdentExpr : Expr {
-    std::string name;
-    IdentExpr(std::string n): name(std::move(n)) {}
+    string name;
+    IdentExpr( string n) : name( move(n)) {}
     void print(int indent=0) const override;
 };
+
+// Unary prefix (e.g., -x, !x, *p)
 struct UnaryExpr : Expr {
     Token op;
     ExprPtr right;
-    UnaryExpr(Token o, ExprPtr r): op(o), right(std::move(r)) {}
+    UnaryExpr(Token o, ExprPtr r) : op(o), right( move(r)) {}
     void print(int indent=0) const override;
 };
+
+// Postfix (e.g., x++, x--)
+struct PostfixExpr : Expr {
+    ExprPtr left;
+    Token op;
+    PostfixExpr(ExprPtr l, Token o) : left( move(l)), op(o) {}
+    void print(int indent=0) const override;
+};
+
+// Binary operator expression (e.g., a + b, a << b)
 struct BinaryExpr : Expr {
     ExprPtr left;
     Token op;
     ExprPtr right;
-    BinaryExpr(ExprPtr l, Token o, ExprPtr r): left(std::move(l)), op(o), right(std::move(r)) {}
-    void print(int indent=0) const override;
-};
-struct CallExpr : Expr {
-    ExprPtr callee;
-    std::vector<ExprPtr> args;
-    CallExpr(ExprPtr c, std::vector<ExprPtr> a): callee(std::move(c)), args(std::move(a)) {}
+    BinaryExpr(ExprPtr l, Token o, ExprPtr r) : left( move(l)), op(o), right( move(r)) {}
     void print(int indent=0) const override;
 };
 
-// Statements / Decls
+// Function call: callee(args...)
+struct CallExpr : Expr {
+    ExprPtr callee;
+    vector<ExprPtr> args;
+    CallExpr(ExprPtr c,  vector<ExprPtr> a) : callee( move(c)), args( move(a)) {}
+    void print(int indent=0) const override;
+};
+
+// Member access: obj.field
+struct MemberExpr : Expr {
+    ExprPtr object;
+    string member; // identifier (the field name)
+    Token op; // token for '.' or '->' if useful
+    MemberExpr(ExprPtr o,  string m, Token oper) : object( move(o)), member( move(m)), op(oper) {}
+    void print(int indent=0) const override;
+};
+
+// Indexing: arr[index]
+struct IndexExpr : Expr {
+    ExprPtr object;
+    ExprPtr index;
+    IndexExpr(ExprPtr o, ExprPtr i) : object( move(o)), index( move(i)) {}
+    void print(int indent=0) const override;
+};
+
+// ---------------- Statements / Declarations ----------------
 struct Stmt : ASTNode { };
-using StmtPtr = std::unique_ptr<Stmt>;
+using StmtPtr =  unique_ptr<Stmt>;
 
 struct ExprStmt : Stmt {
     ExprPtr expr;
-    ExprStmt(ExprPtr e): expr(std::move(e)) {}
+    ExprStmt(ExprPtr e) : expr( move(e)) {}
     void print(int indent=0) const override;
 };
+
 struct ReturnStmt : Stmt {
-    std::optional<ExprPtr> expr;
-    ReturnStmt(std::optional<ExprPtr> e): expr(std::move(e)) {}
+    optional<ExprPtr> expr;
+    ReturnStmt( optional<ExprPtr> e) : expr( move(e)) {}
     void print(int indent=0) const override;
 };
+
 struct BlockStmt : Stmt {
-    std::vector<StmtPtr> statements;
-    BlockStmt(std::vector<StmtPtr> s = {}) : statements(std::move(s)) {}
+    vector<StmtPtr> statements;
+    BlockStmt( vector<StmtPtr> s = {}) : statements( move(s)) {}
     void print(int indent=0) const override;
 };
+
 struct VarDecl : Stmt {
-    std::string name;
-    std::optional<TypeNode> typeNode;
-    std::optional<ExprPtr> initializer;
-    VarDecl(std::string n, std::optional<TypeNode> t, std::optional<ExprPtr> i)
-        : name(std::move(n)), typeNode(std::move(t)), initializer(std::move(i)) {}
+    string name;
+    optional<TypeNode> typeNode;
+    optional<ExprPtr> initializer;
+    VarDecl( string n,  optional<TypeNode> t,  optional<ExprPtr> i)
+        : name( move(n)), typeNode( move(t)), initializer( move(i)) {}
     void print(int indent=0) const override;
 };
+
 struct IfStmt : Stmt {
     ExprPtr condition;
-    std::unique_ptr<BlockStmt> thenBranch;
-    std::optional<std::unique_ptr<BlockStmt>> elseBranch; // may hold an else block
-    IfStmt(ExprPtr c, std::unique_ptr<BlockStmt> t, std::optional<std::unique_ptr<BlockStmt>> e)
-        : condition(std::move(c)), thenBranch(std::move(t)), elseBranch(std::move(e)) {}
+    unique_ptr<BlockStmt> thenBranch;
+    // elseBranch is nullable; use nullptr if absent
+    unique_ptr<BlockStmt> elseBranch;
+    IfStmt(ExprPtr c,  unique_ptr<BlockStmt> t,  unique_ptr<BlockStmt> e = nullptr)
+        : condition( move(c)), thenBranch( move(t)), elseBranch( move(e)) {}
     void print(int indent=0) const override;
 };
+
 struct WhileStmt : Stmt {
     ExprPtr condition;
-    std::unique_ptr<BlockStmt> body;
-    WhileStmt(ExprPtr c, std::unique_ptr<BlockStmt> b): condition(std::move(c)), body(std::move(b)) {}
+    unique_ptr<BlockStmt> body;
+    WhileStmt(ExprPtr c,  unique_ptr<BlockStmt> b) : condition( move(c)), body( move(b)) {}
     void print(int indent=0) const override;
 };
+
 struct ForStmt : Stmt {
-    // for(init; cond; step) { body }
-    std::optional<StmtPtr> init; // var decl or expression stmt
-    std::optional<ExprPtr> condition;
-    std::optional<ExprPtr> post;
-    std::unique_ptr<BlockStmt> body;
-    ForStmt(std::optional<StmtPtr> i, std::optional<ExprPtr> c, std::optional<ExprPtr> p, std::unique_ptr<BlockStmt> b)
-        : init(std::move(i)), condition(std::move(c)), post(std::move(p)), body(std::move(b)) {}
+    // for(init; cond; post) { body }
+    // init may be variable decl or expression statement (or null)
+    optional<StmtPtr> init;
+    optional<ExprPtr> condition;
+    optional<ExprPtr> post;
+    unique_ptr<BlockStmt> body;
+    ForStmt( optional<StmtPtr> i,  optional<ExprPtr> c,  optional<ExprPtr> p,  unique_ptr<BlockStmt> b)
+        : init( move(i)), condition( move(c)), post( move(p)), body( move(b)) {}
     void print(int indent=0) const override;
 };
+
 struct BreakStmt : Stmt { void print(int indent=0) const override; };
 struct ContinueStmt : Stmt { void print(int indent=0) const override; };
 
 struct FuncParam {
-    std::string name;
+    string name;
     TypeNode type;
 };
 
 struct FuncDecl : Stmt {
-    std::string name;
-    std::vector<FuncParam> params; // name, type
-    std::optional<TypeNode> retType;
-    std::unique_ptr<BlockStmt> body;
-    FuncDecl(std::string n,
-             std::vector<FuncParam> p,
-             std::optional<TypeNode> r,
-             std::unique_ptr<BlockStmt> b)
-        : name(std::move(n)), params(std::move(p)), retType(std::move(r)), body(std::move(b)) {}
+    string name;
+    vector<FuncParam> params;
+    optional<TypeNode> retType;
+    unique_ptr<BlockStmt> body;
+    FuncDecl( string n,  vector<FuncParam> p,  optional<TypeNode> r,  unique_ptr<BlockStmt> b)
+        : name( move(n)), params( move(p)), retType( move(r)), body( move(b)) {}
     void print(int indent=0) const override;
 };
 
 struct Program : ASTNode {
-    std::vector<StmtPtr> items;
+    vector<StmtPtr> items;
     void print(int indent=0) const override;
 };
 
-// Parser
+// ---------------- Parser interface ----------------
 class Parser {
 public:
-    // parser will create an internal RegexLexer utility instance to map token names
-    Parser(const std::vector<Token>& tokens);
+    // constructor uses tokens from lexer
+    Parser(const  vector<Token>& tokens);
 
-    // parse entire program; throws ParseError on fatal error
-    std::unique_ptr<Program> parse_program();
+    // parse whole program (returns AST root). Caller handles exceptions / ParseError.
+    unique_ptr<Program> parse_program();
 
 private:
-    const std::vector<Token>& tokens_;
+    const  vector<Token>& tokens_;
     size_t pos_ = 0;
-    mutable RegexLexer lexUtil_; // used for tokenTypeToString mapping
+    mutable RegexLexer lexUtil_; // for token name mapping and debug printing
 
-    // helpers
+    // ---------- Parser context & scopes ----------
+    // stack of scopes; each scope maps identifier -> count (for duplicate checks)
+    vector< unordered_map< string,int>> scope_stack_;
+
+    // helper counters for context checks
+    int function_depth_ = 0; // >0 inside functions
+    int loop_depth_ = 0;     // >0 inside loops
+
+    // ------------- helpers -------------
     const Token& peek() const;
-    // peek n tokens ahead (1-based: peek_n(1) == peek())
-    const Token& peek_n(size_t n) const;
+    const Token& peek_n(size_t n) const; // 1-based
     const Token& previous() const;
     const Token& advance();
     bool is_at_end() const;
 
-    // LL(1/LL(2)) utilities
-    bool matchLexeme(const std::string &lexeme); // consume if lexeme matches
-    bool matchTypeName(const std::string &typeName); // consume if tokenTypeToString == typeName
-    bool matchEither(const std::string &lexOrType); // convenience (lexeme or typeName)
-    bool checkEither(const std::string &lexOrType) const;
+    // token checks (prefer token-type checks; optionally lexeme)
+    bool matchType(TokenType t);                  // consume if next token.type == t
+    bool matchAnyType(const  initializer_list<TokenType>& types);
+    bool checkType(TokenType t) const;
+    bool checkEitherLexemeOrType(const  string &lexOrType) const; // keep for compatibility
 
-    // lookahead by n tokens and check lexeme or typeName
-    bool matchLexemeN(size_t n, const std::string &lexeme);
-    bool matchTypeNameN(size_t n, const std::string &typeName) const;
+    // lexeme-based functions kept for compatibility
+    bool matchLexeme(const  string &lexeme);
+    bool matchEither(const  string &lexOrType);
+    bool checkEither(const  string &lexOrType) const;
 
-    // return reference to the token if next token matches, otherwise raise ParseError
-    const Token& expectEither(const std::string &lexOrType, ParseErrorKind errKind);
+    // lookahead without consuming
+    bool checkTypeN(size_t n, TokenType t) const;
 
-    // error recovery
+    // expect next token to be something, otherwise throw ParseError
+    const Token& expectType(TokenType t, ParseErrorKind errKind);
+    const Token& expectEither(const  string &lexOrType, ParseErrorKind errKind);
+
+    // --------- scope helpers -----------
+    void push_scope();
+    void pop_scope();
+    void declare_symbol_in_current_scope(const  string &name);
+    bool is_declared_in_any_scope(const  string &name) const;
+    bool is_declared_in_current_scope(const  string &name) const;
+
+    // --------- context helpers ----------
+    void enter_function();   // increment function_depth_
+    void exit_function();
+    void enter_loop();       // increment loop_depth_
+    void exit_loop();
+
+    // ---------- error recovery -----------
     void synchronize();
 
-    // parse functions (recursive-descent)
+    // ---------- top-level parsing ----------
     StmtPtr parse_declaration();
     StmtPtr parse_var_decl_or_stmt();
-    std::unique_ptr<FuncDecl> parse_function_decl();
-    std::unique_ptr<BlockStmt> parse_block();
 
+    // Parse a function declared with a leading 'fn' keyword:
+    //    fn name(params...) [: ret] { ... }
+    StmtPtr parse_function_decl();
+
+    // NEW: Parse a function *after* the parser has already consumed a type token
+    // and an identifier (i.e. when encountering: `<type> <ident> ( ... ) { ... }`).
+    // This helper makes the parser able to distinguish between a variable decl
+    // and a C-style typed function declaration.
+    StmtPtr parse_function_decl_after_header(const Token& typeTok, const Token& nameTok);
+
+    unique_ptr<BlockStmt> parse_block();
+
+    // ---------- statements ----------
     StmtPtr parse_statement();
     StmtPtr parse_return_stmt();
     StmtPtr parse_if_stmt();
@@ -236,28 +330,22 @@ private:
     StmtPtr parse_break_stmt();
     StmtPtr parse_continue_stmt();
 
-    // expressions (Pratt)
+    // ---------- expressions (Pratt parser support) ----------
     ExprPtr parse_expression();
-    ExprPtr parse_assignment();
-    ExprPtr parse_pratt(int min_bp = 0);
+    ExprPtr parse_assignment();   // handles = and compound assign
+    ExprPtr parse_pratt(int min_bp = 0); // core Pratt loop
     ExprPtr parse_primary();
 
-    // helpers for parsing lists
-    std::vector<ExprPtr> parse_argument_list();
-    std::vector<StmtPtr> parse_statement_list();
+    // convenience: parse call arg list etc.
+    vector<ExprPtr> parse_argument_list();
 
-    // precedence table helpers (use lexeme operators)
-    int prefix_bp(const std::string &op) const;
-    std::pair<int,int> infix_bp(const std::string &op) const;
+    // precedence binding functions: accept TokenType and lexeme
+    int prefix_bp_by_lexeme(const  string &op) const;
+    int prefix_bp_by_type(TokenType t) const;
+    pair<int,int> infix_bp_by_lexeme(const  string &op) const;
+    pair<int,int> infix_bp_by_type(TokenType t) const;
 
-    // utilities to build specific ParseError instances
-    ParseError make_error(ParseErrorKind kind, const Token* t = nullptr, std::string msg = "") const;
-    ParseError make_error(ParseErrorKind kind, const Token& t, std::string msg = "") const;
-
-    // optional (simple) symbol table helpers used for limited semantic checks
-    // (these are helpers only; full semantic analysis belongs in a separate phase)
-    std::unordered_map<std::string,int> local_scope_count_; // simple duplicate-decl detector per-parse (not full scoping)
-
+    // error constructors
+    ParseError make_error(ParseErrorKind kind, const Token* t = nullptr,  string msg = "") const;
+    ParseError make_error(ParseErrorKind kind, const Token& t,  string msg = "") const;
 };
-
-// End of header

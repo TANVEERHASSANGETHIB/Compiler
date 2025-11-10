@@ -5,6 +5,7 @@
 #include <streambuf>
 #include "regex_lexer.h"
 #include "parser.h"
+#include "scope_errors.h"
 
 using namespace std;
 
@@ -29,8 +30,8 @@ int main(int argc, char** argv) {
     // Read entire file into a string
     ifstream ifs(filename, ios::in | ios::binary);
     if (!ifs) {
-        cerr << "Failed to open input file: " << filename << "\n";
-        cerr << "Usage: " << (argc > 0 ? argv[0] : "lexer_app") << " [input-file.txt]\n";
+        cout << "Failed to open input file: " << filename << "\n";
+        cout << "Usage: " << (argc > 0 ? argv[0] : "lexer_app") << " [input-file.txt]\n";
         return 1;
     }
 
@@ -92,6 +93,8 @@ int main(int argc, char** argv) {
             cout << " at token '" << e.token->value << "', line " << e.token->line << ", column " << e.token->column;
         }
         cout << "\n";
+    } catch (const ScopeError &e) {
+        cout << "Scope error: " << e.what() << "\n";
     } catch (const std::exception &ex) {
         cout << "Exception while parsing: " << ex.what() << "\n";
     } catch (...) {

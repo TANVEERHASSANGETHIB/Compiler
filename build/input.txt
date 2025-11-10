@@ -1,0 +1,9 @@
+
+int some_fn() {
+
+ int b;
+}
+int some_fn() {
+
+    int a = b;
+}

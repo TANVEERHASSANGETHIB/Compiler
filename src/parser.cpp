@@ -127,18 +127,73 @@ void Program::print(int indent) const {
     for (auto &it : items) if (it) it->print(indent+1);
 }
 
-// ---------------- parser internals ----------------
 Parser::Parser(const  vector<Token>& tokens)
-    : tokens_(tokens), pos_(0), lexUtil_(), scope_stack_(), function_depth_(0), loop_depth_(0) {
-    // initial global scope
-    push_scope();
+    : tokens_(tokens), pos_(0), lexUtil_(), scopeStack_(), function_depth_(0), loop_depth_(0) {
+    // Global scope is automatically created by ScopeStack constructor
 }
 
-// ---------- token helpers ----------
-const Token& Parser::peek() const {
+// ==================== Scope Management Methods ====================
+
+void Parser::push_scope(const string& name) {
+    scopeStack_.enterScope(name);
+}
+
+void Parser::pop_scope() {
+    scopeStack_.exitScope();
+}
+
+void Parser::declare_variable(const string& name, TokenType dataType) {
+    if (!scopeStack_.addSymbol(name, SymbolType::VARIABLE, dataType)) {
+        throw ScopeError(ScopeErrorType::VariableRedefinition, name);
+    }
+}
+
+void Parser::declare_function(const string& name, TokenType returnType) {
+    if (!scopeStack_.addSymbol(name, SymbolType::FUNCTION, returnType)) {
+        throw ScopeError(ScopeErrorType::FunctionPrototypeRedefinition, name);
+    }
+}
+
+void Parser::declare_parameter(const string& name, TokenType dataType) {
+    if (!scopeStack_.addSymbol(name, SymbolType::PARAMETER, dataType)) {
+        throw ScopeError(ScopeErrorType::VariableRedefinition, name);
+    }
+}
+
+void Parser::check_variable_access(const string& name, const Token& token) {
+    Symbol* symbol = scopeStack_.lookup(name);
+    if (!symbol || (symbol->type != SymbolType::VARIABLE && symbol->type != SymbolType::PARAMETER)) {
+        throw ScopeError(ScopeErrorType::UndeclaredVariableAccessed, name);
+    }
+}
+
+void Parser::check_function_call(const string& name, const Token& token) {
+    Symbol* symbol = scopeStack_.lookup(name);
+    if (!symbol || symbol->type != SymbolType::FUNCTION) {
+        throw ScopeError(ScopeErrorType::UndefinedFunctionCalled, name);
+    }
+}
+bool Parser::is_declared_in_current_scope(const string& name) const {
+    return scopeStack_.lookupCurrent(name) != nullptr;
+}
+
+
+TokenType Parser::typeNameToTokenType(const string& typeName) const {
+    if (typeName == "int") return T_INT;
+    if (typeName == "float") return T_FLOAT;
+    if (typeName == "string") return T_STRING;
+    if (typeName == "bool") return T_BOOL;
+    return T_INT; // default
+}
+
+// ==================== Existing Parser Methods (Updated) ====================
+
+const Token& Parser::peek() const 
+{
     return peek_n(1);
 }
-const Token& Parser::peek_n(size_t n) const {
+const Token& Parser::peek_n(size_t n) const 
+{
     size_t idx = pos_ + (n - 1);
     if (idx < tokens_.size()) return tokens_[idx];
     static Token eofTok;
@@ -160,8 +215,8 @@ bool Parser::is_at_end() const {
     return false;
 }
 
-// token checks: direct by TokenType
-bool Parser::matchType(TokenType t) {
+bool Parser::matchType(TokenType t) 
+{
     if (is_at_end()) return false;
     if (peek().type == t) { advance(); return true; }
     return false;
@@ -214,28 +269,6 @@ const Token& Parser::expectEither(const  string &lexOrType, ParseErrorKind errKi
     throw make_error(errKind, &peek(),  string("Expected token ") + lexOrType);
 }
 
-// ---------------- scope helpers ----------------
-void Parser::push_scope() {
-    scope_stack_.push_back( unordered_map< string,int>{});
-}
-void Parser::pop_scope() {
-    if (!scope_stack_.empty()) scope_stack_.pop_back();
-}
-void Parser::declare_symbol_in_current_scope(const  string &name) {
-    if (scope_stack_.empty()) push_scope();
-    scope_stack_.back()[name] += 1;
-}
-bool Parser::is_declared_in_any_scope(const  string &name) const {
-    for (auto it = scope_stack_.rbegin(); it != scope_stack_.rend(); ++it) {
-        if (it->find(name) != it->end()) return true;
-    }
-    return false;
-}
-bool Parser::is_declared_in_current_scope(const  string &name) const {
-    if (scope_stack_.empty()) return false;
-    return scope_stack_.back().find(name) != scope_stack_.back().end();
-}
-
 // --------- context helpers ----------
 void Parser::enter_function() { ++function_depth_; }
 void Parser::exit_function() { if (function_depth_>0) --function_depth_; }
@@ -279,6 +312,9 @@ unique_ptr<Program> Parser::parse_program() {
         } catch (const ParseError &err) {
             cerr << "ParseError: " << err.message << "\n";
             synchronize();
+        } catch (const ScopeError &err) {
+            cerr << "ScopeError: " << err.what() << "\n";
+            synchronize();
         }
     }
     return program;
@@ -299,6 +335,7 @@ StmtPtr Parser::parse_declaration() {
         // consume type token
         Token typeTok = advance();
         string typename_text = typeTok.value;
+        TokenType dataType = typeNameToTokenType(typename_text);
 
         // expect identifier
         if (!checkEither("T_IDENTIFIER") && !(peek().value.size() && ( isalpha((unsigned char)peek().value[0]) || peek().value[0] == '_'))) {
@@ -328,10 +365,8 @@ StmtPtr Parser::parse_declaration() {
             // consumed if present
         }
 
-        if (is_declared_in_current_scope(name)) {
-            throw make_error(ParseErrorKind::DuplicateDeclaration, &idTok, "Duplicate declaration of " + name);
-        }
-        declare_symbol_in_current_scope(name);
+        // Use new scope system
+        declare_variable(name, dataType);
 
         return make_unique<VarDecl>(name, optional<TypeNode>(TypeNode(typename_text)), move(initializer));
     }
@@ -358,17 +393,17 @@ StmtPtr Parser::parse_var_decl_or_stmt() {
     Token idTok = advance();
     string name = idTok.value;
 
-    if (is_declared_in_current_scope(name)) {
-        throw make_error(ParseErrorKind::DuplicateDeclaration, &idTok, "Duplicate declaration of " + name);
-    }
-    declare_symbol_in_current_scope(name);
-
     optional<TypeNode> typeNode;
+    TokenType dataType = T_INT; // default
     if (matchEither(":") || checkEither("T_COLON")) {
         if (!checkEither("T_IDENTIFIER")) throw make_error(ParseErrorKind::ExpectedTypeToken, &peek(), "Expected type name after ':'");
         Token typeTok = advance();
         typeNode = TypeNode(typeTok.value);
+        dataType = typeNameToTokenType(typeTok.value);
     }
+
+    // Use new scope system
+    declare_variable(name, dataType);
 
     optional<ExprPtr> initializer;
     if (matchEither("=") || checkEither("T_ASSIGN")) {
@@ -389,6 +424,7 @@ StmtPtr Parser::parse_var_decl_or_stmt() {
 StmtPtr Parser::parse_function_decl_after_header(const Token& typeTok, const Token& nameTok) {
     string fname = nameTok.value;
     string returnTypeName = typeTok.value;
+    TokenType returnType = typeNameToTokenType(returnTypeName);
 
     // At this point peek() should be '('
     expectEither("(", ParseErrorKind::FailedToFindToken);
@@ -408,6 +444,7 @@ StmtPtr Parser::parse_function_decl_after_header(const Token& typeTok, const Tok
                 throw make_error(ParseErrorKind::ExpectedTypeToken, &peek(), "Expected parameter type");
             }
             Token consumedType = advance(); // consume type token
+            TokenType paramType = typeNameToTokenType(consumedType.value);
 
             // parameter name
             if (!checkEither("T_IDENTIFIER") && !(peek().value.size() && (isalpha((unsigned char)peek().value[0]) || peek().value[0]=='_'))) {
@@ -434,12 +471,17 @@ StmtPtr Parser::parse_function_decl_after_header(const Token& typeTok, const Tok
     // return type already captured from typeTok; we can keep it
     retType = TypeNode(returnTypeName);
 
+    // Use new scope system: declare function in current scope
+    declare_function(fname, returnType);
+
     // now parse body: require '{'
     // enter function context and push param scope
     enter_function();
-    push_scope();
-    // declare params
-    for (auto &p : params) declare_symbol_in_current_scope(p.name);
+    push_scope("function:" + fname);
+    // declare params using new scope system
+    for (auto &p : params) {
+        declare_parameter(p.name, typeNameToTokenType(p.type.name));
+    }
 
     unique_ptr<BlockStmt> body;
     try {
@@ -452,12 +494,6 @@ StmtPtr Parser::parse_function_decl_after_header(const Token& typeTok, const Tok
 
     pop_scope();
     exit_function();
-
-    // declare function name in current scope (if desired)
-    if (is_declared_in_current_scope(fname)) {
-        throw make_error(ParseErrorKind::DuplicateDeclaration, &nameTok, "Duplicate declaration of " + fname);
-    }
-    declare_symbol_in_current_scope(fname);
 
     return make_unique<FuncDecl>(fname, move(params), move(retType), move(body));
 }
@@ -486,16 +522,23 @@ StmtPtr Parser::parse_function_decl() {
     expectEither(")", ParseErrorKind::FailedToFindToken);
 
     optional<TypeNode> retType;
+    TokenType returnType = T_INT; // default
     if (matchEither(":") || matchEither("T_COLON")) {
         if (!checkEither("T_IDENTIFIER")) throw make_error(ParseErrorKind::ExpectedTypeToken, &peek(), "Expected return type after ':'");
         Token rtok = advance();
         retType = TypeNode(rtok.value);
+        returnType = typeNameToTokenType(rtok.value);
     }
+
+    // Use new scope system: declare function in current scope
+    declare_function(fname, returnType);
 
     // parse body as block; set function context and new scope for params
     enter_function();
-    push_scope();
-    for (auto &p : params) declare_symbol_in_current_scope(p.name);
+    push_scope("function:" + fname);
+    for (auto &p : params) {
+        declare_parameter(p.name, typeNameToTokenType(p.type.name));
+    }
 
     unique_ptr<BlockStmt> body;
     try {
@@ -509,11 +552,6 @@ StmtPtr Parser::parse_function_decl() {
     pop_scope();
     exit_function();
 
-    if (is_declared_in_current_scope(fname)) {
-        throw make_error(ParseErrorKind::DuplicateDeclaration, &nameTok, "Duplicate declaration of " + fname);
-    }
-    declare_symbol_in_current_scope(fname);
-
     return make_unique<FuncDecl>(fname, move(params), move(retType), move(body));
 }
 
@@ -523,13 +561,16 @@ unique_ptr<BlockStmt> Parser::parse_block() {
         throw make_error(ParseErrorKind::FailedToFindToken, &peek(), "Expected '{' for block");
     }
     auto block =  make_unique<BlockStmt>();
-    push_scope();
+    push_scope("block");
     while (!checkEither("}") && !checkEither("T_RBRACE") && !is_at_end()) {
         try {
             StmtPtr s = parse_declaration();
             if (s) block->statements.push_back( move(s));
         } catch (const ParseError &err) {
             cerr << "ParseError in block: " << err.message << "\n";
+            synchronize();
+        } catch (const ScopeError &err) {
+            cerr << "ScopeError in block: " << err.what() << "\n";
             synchronize();
         }
     }
@@ -661,6 +702,7 @@ StmtPtr Parser::parse_for_stmt() {
         if (isTypeToken) {
             // Parse typed initializer: type ident [= expr]
             Token typeTok = advance(); // consume type
+            TokenType dataType = typeNameToTokenType(typeTok.value);
             if (!checkEither("T_IDENTIFIER") && !(peek().value.size() && (isalpha((unsigned char)peek().value[0]) || peek().value[0]=='_'))) {
                 throw make_error(ParseErrorKind::ExpectedIdentifier, &peek(), "Expected identifier after type in for-init");
             }
@@ -675,11 +717,8 @@ StmtPtr Parser::parse_for_stmt() {
                 initializer = parse_expression();
             }
 
-            // declare in current scope (simpler than trying to alter block scoping here)
-            if (is_declared_in_current_scope(name)) {
-                throw make_error(ParseErrorKind::DuplicateDeclaration, &idTok, "Duplicate declaration of " + name);
-            }
-            declare_symbol_in_current_scope(name);
+            // Use new scope system
+            declare_variable(name, dataType);
 
             init = make_unique<VarDecl>(name, optional<TypeNode>(TypeNode(typeTok.value)), move(initializer));
         }
@@ -854,7 +893,10 @@ ExprPtr Parser::parse_pratt(int min_bp) {
         if (bp.first == 0 || bp.first < min_bp) {
             // handle postfix/calls/index/member before breaking
             if (opLex == "(" || lexUtil_.tokenTypeToString(cur.type) == "T_LPAREN" || lexUtil_.tokenTypeToString(cur.type) == "T_PARENL") {
-                // function call
+                // function call - check if callee is an identifier for scope checking
+                if (auto ident = dynamic_cast<IdentExpr*>(left.get())) {
+                    check_function_call(ident->name, cur);
+                }
                 advance(); // consume '('
                 vector<ExprPtr> args;
                 if (!checkEither(")") && !checkEither("T_RPAREN")) {
@@ -936,6 +978,8 @@ ExprPtr Parser::parse_primary() {
 
     if (!t.value.empty() && ( isalpha((unsigned char)t.value[0]) || t.value[0]=='_') || lexUtil_.tokenTypeToString(t.type) == "T_IDENTIFIER") {
         Token tok = advance();
+        // Check if this identifier is a declared variable
+        check_variable_access(tok.value, tok);
         return  make_unique<IdentExpr>(tok.value);
     }
 

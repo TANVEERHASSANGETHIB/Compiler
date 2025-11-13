@@ -3,15 +3,15 @@
 
 #include <string>
 #include <vector>
-#include "base_lexer.h"   // Use shared TokenType and Token definitions
+#include "base_lexer.h"
 
 using namespace std;
+
 class RegexLexer {
 public:
     RegexLexer() = default;
-
-     vector<Token> tokenize(const  string &src);
-     string tokenTypeToString(TokenType type);
+    vector<Token> tokenize(const string &src);
+    string tokenTypeToString(TokenType type);
 };
 
 #endif

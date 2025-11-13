@@ -1,9 +1,16 @@
 
-int some_fn() {
+void add( int a)
+{
+  return 0;
 
- int b;
 }
-int some_fn() {
+bool add(){
+  return false;
 
-    int a = b;
+}
+int main()
+{
+  
+  int a = add(b);
+  return 0;
 }

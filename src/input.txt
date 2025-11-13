@@ -1,4 +1,0 @@
-int some_fn() {
-
-    int a = b + c * d / 1230 - XYZ / -g;
-}

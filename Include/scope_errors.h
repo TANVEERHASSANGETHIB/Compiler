@@ -4,27 +4,30 @@
 #include <stdexcept>
 #include <string>
 
+using namespace std;
+
 enum class ScopeErrorType {
     UndeclaredVariableAccessed,
     UndefinedFunctionCalled,
     VariableRedefinition,
-    FunctionPrototypeRedefinition
+    FunctionPrototypeRedefinition,
+    InvalidSymbolType
 };
 
-class ScopeError : public std::runtime_error {
+class ScopeError : public runtime_error {
 private:
     ScopeErrorType errorType;
-    std::string identifier;
+    string identifier;
 
 public:
-    ScopeError(ScopeErrorType type, const std::string& id)
-        : std::runtime_error(createMessage(type, id)), errorType(type), identifier(id) {}
+    ScopeError(ScopeErrorType type, const string& id)
+        : runtime_error(createMessage(type, id)), errorType(type), identifier(id) {}
 
     ScopeErrorType getErrorType() const { return errorType; }
-    const std::string& getIdentifier() const { return identifier; }
+    const string& getIdentifier() const { return identifier; }
 
 private:
-    static std::string createMessage(ScopeErrorType type, const std::string& id) {
+    static string createMessage(ScopeErrorType type, const string& id) {
         switch (type) {
             case ScopeErrorType::UndeclaredVariableAccessed:
                 return "Undeclared variable accessed: " + id;
@@ -34,6 +37,8 @@ private:
                 return "Variable redefinition: " + id;
             case ScopeErrorType::FunctionPrototypeRedefinition:
                 return "Function prototype redefinition: " + id;
+            case ScopeErrorType::InvalidSymbolType:
+                return "Invalid symbol type: " + id;
             default:
                 return "Scope error: " + id;
         }

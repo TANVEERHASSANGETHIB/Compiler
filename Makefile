@@ -2,7 +2,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Iinclude
 
 # Add all source files including the new scope.cpp
-SRC = src/main.cpp src/manual_lexer.cpp src/regex_lexer.cpp src/parser.cpp src/scope.cpp
+SRC = src/main.cpp src/manual_lexer.cpp src/regex_lexer.cpp src/parser.cpp src/scope.cpp src/type_checker.cpp
 OBJ = $(SRC:.cpp=.o)
 TARGET = build/lexer_app.exe
 
